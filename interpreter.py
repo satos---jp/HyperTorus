@@ -3,61 +3,22 @@ import sys
 
 class Memory:
 	def __init__(self):
-		self.intpart = 0
-		self.fracpart = 0
-		self.keta = 0
-		self.dir = 0
-		self.data = {}
+		self.stack = []
 		
 	def __str__(self):
-		return "mp: %s memory: %s" % (self.pos_repr(),str(self.data))
+		return "stack: %s" % (self.stack)
 	
-	def pos_repr(self):
-		a = bin(self.intpart)[2:].zfill(max(0,self.keta+1))[::-1]
-		b = bin(self.fracpart)[2:].zfill(max(0,-self.keta))
-		c = '-' if self.dir==1 else '+'
-		if self.keta >= 0:
-			a = a[:self.keta] + c + a[self.keta+1:]
-		else:
-			b = b[:-self.keta-1] + c + b[-self.keta:]
-		return "%s.%s" % (a[::-1],b) 
 	
-	def pos(self):
-		return self.pos_repr().replace('-','x').replace('+','x')
-	
-	def get(self):
-		return self.data.get(self.pos(),0)
-	
-	def set(self,v):
-		self.data[self.pos()] = v
-	
-	def turn(self,isLeft):
-		if isLeft ^ (self.dir < 0):
-			self.keta += 1
-		else:
-			self.keta -= 1
-	
-	def get_left_right(self):
-		self.turn(True)
-		left = self.get()
-		self.turn(False)
-		self.turn(False)
-		right = self.get()
-		self.turn(True)
-		return (left,right)
-		
-	
-	def operate(self,f):
-		self.set(f(*self.get_left_right()))
-	
-	def inverse(self):
-		self.dir = 1 - self.dir
-		if self.keta >= 0:
-			bit = 1<<self.keta
-			self.intpart = (self.intpart & (~bit)) | (self.dir * bit)
-		else:
-			bit = 1<<(-self.keta+1)
-			self.fracpart = (self.fracpart & (~bit)) | (self.dir * bit)
+	def push(self,x):
+		self.stack.append(x)
+	def pop(self):
+		return self.stack.pop()
+	def push_bottom(self,x):
+		self.stack = [x] + self.stack
+	def pop_bottom(self):
+		res = self.stack[0]
+		self.stack = self.stack[1:]
+		return res
 
 def run(program,read,write,dumpcond):
 	bl = 1
@@ -66,6 +27,7 @@ def run(program,read,write,dumpcond):
 		n *= 2
 		bl += 1
 	program += '.' * (n-len(program))
+	program = list(program)
 
 	ip = 0
 	ip_dir = 1
@@ -83,6 +45,9 @@ def run(program,read,write,dumpcond):
 			ip_dir //= 2
 		ip_dir *= sign
 	
+	def ip_mod(p):
+		return ((p%n + n)%n)
+	
 	reg = 0
 	isregset = False
 	mem = Memory()
@@ -90,25 +55,66 @@ def run(program,read,write,dumpcond):
 		c = program[ip]
 		if dumpcond(ip):
 			sys.stderr.write("ip: (%s,%+d) inst: \'%c\'(%03d) %s\n" % (bin(ip)[2:].zfill(bl),ip_dir,c,ord(c),str(mem)))
+		
+		# IP operation
 		if c in '><?':
 			if c=='?':
-				if mem.get()==0:
+				if mem.pop()==0:
 					c = '<'
 				else:
 					c = '>'
 			turn_ip_dir(c)
 		elif c == '|':
 			ip_dir *= -1
+		elif c == 'j':
+			ip = ip_mod(mem.pop()) ^ abs(ip_dir)
 		elif c == '.':
 			pass
-		elif c == '@':
+		elif c == 'q':
 			break
-		elif c in '0123456789abcdef':
-			mem.set(int(c,16))
-		elif c in '{}':
-			mem.turn(c == '{')
+		# stack state operation
 		elif c == '$':
-			mem.inverse()
+			p = mem.pop()
+			q = mem.pop()
+			mem.push(p)
+			mem.push(q)
+		elif c == '@':
+			p = mem.pop()
+			q = mem.pop()
+			r = mem.pop()
+			mem.push(p)
+			mem.push(r)
+			mem.push(q)
+		elif c == ':':
+			p = mem.pop()
+			mem.push(p)
+			mem.push(p)
+		elif c == '@':
+			mem.pop()
+		elif c == '}':
+			a = mem.pop()
+			mem.push_bottom(a)
+		elif c == '{':
+			a = mem.pop_bottom()
+			mem.push(a)
+		#reflection
+		elif c == 'g':
+			p = mem.pop()
+			mem.push(program[ip_mod(p)])
+		elif c == 'p':
+			p = mem.pop()
+			v = mem.pop()
+			program[ip_mod(p)] = chr(((v%256)+256)%256)
+		# set value
+		elif c in '0123456789abcdef':
+			mem.push(int(c,16))
+		elif c == '&':
+			if not isregset:
+				reg = mem.pop()
+			else:
+				mem.push(reg)
+			isregset = not isregset
+		# binary operation
 		elif c in '+-*/%=()':
 			if c == '+':
 				f = lambda x,y: x+y
@@ -126,24 +132,20 @@ def run(program,read,write,dumpcond):
 				f = lambda x,y: 1 if x<y else 0
 			elif c == ')':
 				f = lambda x,y: 1 if x>y else 0
-			mem.operate(f)
-		elif c == '&':
-			if not isregset:
-				reg = mem.get()
-			else:
-				mem.set(reg)
-			isregset = not isregset
-		elif c == 'j':
-			ip = ((mem.get()%n + n)%n) ^ abs(ip_dir)
+			r = mem.pop()
+			l = mem.pop()
+			mem.push(f(l,r))
+
+		# IO operation
 		elif c == 'r':
 			s = read()
 			if len(s)==0:
 				s = -1
 			else:
 				s = ord(s)
-			mem.set(s)
+			mem.push(s)
 		elif c == 'w':
-			write(chr(mem.get() % 256))
+			write(chr(mem.pop() % 256))
 		elif c == 'i':
 			s = ""
 			while True:
@@ -151,9 +153,9 @@ def run(program,read,write,dumpcond):
 				if not c in "0123456789":
 					break
 				s += c
-			mem.set(int(s,10))
+			mem.push(int(s,10))
 		elif c == 'o':
-			write("%d" % mem.get())
+			write("%d" % mem.pop())
 		else:
 			sys.stderr.write('unknown character \'%s\'(%d)\n' % (c,ord(c)))
 			exit(-1)
