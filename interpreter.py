@@ -8,7 +8,6 @@ class Memory:
 	def __str__(self):
 		return "stack: %s" % (self.stack)
 	
-	
 	def push(self,x):
 		self.stack.append(x)
 	def pop(self):
@@ -26,7 +25,7 @@ def run(program,read,write,dumpcond):
 	while n < len(program):
 		n *= 2
 		bl += 1
-	program += '.' * (n-len(program))
+	program += b'.' * (n-len(program))
 	program = list(program)
 
 	ip = 0
@@ -35,7 +34,7 @@ def run(program,read,write,dumpcond):
 		nonlocal ip_dir
 		sign = ip_dir // abs(ip_dir)
 		ip_dir *= sign
-		if (c == '<') ^ (sign < 0):
+		if (c == b'<') ^ (sign < 0):
 			ip_dir *= 2
 			if ip_dir == n:
 				ip_dir = 1
@@ -48,116 +47,121 @@ def run(program,read,write,dumpcond):
 	def ip_mod(p):
 		return ((p%n + n)%n)
 	
-	reg = 0
+	def byte_mod(p):
+		return ((p%256+256)%256)
+	
+	reg = None
 	isregset = False
 	mem = Memory()
 	while True:
 		c = program[ip]
 		if dumpcond(ip):
-			sys.stderr.write("ip: (%s,%+d) inst: \'%c\'(%03d) %s\n" % (bin(ip)[2:].zfill(bl),ip_dir,c,ord(c),str(mem)))
+			sys.stderr.write("ip: (%s,%+d) inst: \'%c\'(%03d) reg: %s %s\n" % (bin(ip)[2:].zfill(bl),ip_dir,chr(c),c,str(reg),str(mem)))
 		
+		c = bytes([c])
 		# IP operation
-		if c in '><?':
-			if c=='?':
+		if c in b'><?':
+			if c == b'?':
 				if mem.pop()==0:
-					c = '<'
+					c = b'<'
 				else:
-					c = '>'
+					c = b'>'
 			turn_ip_dir(c)
-		elif c == '|':
+		elif c == b'|':
 			ip_dir *= -1
-		elif c == 'j':
+		elif c == b'j':
 			ip = ip_mod(mem.pop()) ^ abs(ip_dir)
-		elif c == '.':
+		elif c == b'.':
 			pass
-		elif c == 'q':
+		elif c == b'q':
 			break
 		# stack state operation
-		elif c == '$':
+		elif c == b'$':
 			p = mem.pop()
 			q = mem.pop()
 			mem.push(p)
 			mem.push(q)
-		elif c == '@':
+		elif c == b'@':
 			p = mem.pop()
 			q = mem.pop()
 			r = mem.pop()
 			mem.push(p)
 			mem.push(r)
 			mem.push(q)
-		elif c == ':':
+		elif c == b':':
 			p = mem.pop()
 			mem.push(p)
 			mem.push(p)
-		elif c == '@':
+		elif c == b'~':
 			mem.pop()
-		elif c == '}':
+		elif c == b'}':
 			a = mem.pop()
 			mem.push_bottom(a)
-		elif c == '{':
+		elif c == b'{':
 			a = mem.pop_bottom()
 			mem.push(a)
 		#reflection
-		elif c == 'g':
+		elif c == b'g':
 			p = mem.pop()
 			mem.push(program[ip_mod(p)])
-		elif c == 'p':
+		elif c == b'p':
 			p = mem.pop()
 			v = mem.pop()
-			program[ip_mod(p)] = chr(((v%256)+256)%256)
+			program[ip_mod(p)] = byte_mod(v)
 		# set value
-		elif c in '0123456789abcdef':
+		elif c in b'0123456789abcdef':
 			mem.push(int(c,16))
-		elif c == '&':
+		elif c == b'&':
 			if not isregset:
 				reg = mem.pop()
 			else:
 				mem.push(reg)
+				reg = None
 			isregset = not isregset
 		# binary operation
-		elif c in '+-*/%=()':
-			if c == '+':
+		elif c in b'+-*/%=()':
+			if c == b'+':
 				f = lambda x,y: x+y
-			elif c == '-':
+			elif c == b'-':
 				f = lambda x,y: x-y
-			elif c == '*':
+			elif c == b'*':
 				f = lambda x,y: x*y
-			elif c == '/':
+			elif c == b'/':
 				f = lambda x,y: x//y
-			elif c == '%':
+			elif c == b'%':
 				f = lambda x,y: x%y
-			elif c == '=':
+			elif c == b'=':
 				f = lambda x,y: 1 if x==y else 0
-			elif c == '(':
+			elif c == b'(':
 				f = lambda x,y: 1 if x<y else 0
-			elif c == ')':
+			elif c == b')':
 				f = lambda x,y: 1 if x>y else 0
 			r = mem.pop()
 			l = mem.pop()
 			mem.push(f(l,r))
 
 		# IO operation
-		elif c == 'r':
+		elif c == b'r':
 			s = read()
 			if len(s)==0:
 				s = -1
 			else:
 				s = ord(s)
 			mem.push(s)
-		elif c == 'w':
-			write(chr(mem.pop() % 256))
-		elif c == 'i':
-			s = ""
+		elif c == b'w':
+			write(bytes([byte_mod(mem.pop())]))
+		elif c == b'i':
+			s = b""
 			while True:
 				c = read()
-				if not c in "0123456789":
+				if not c in b"0123456789":
 					break
 				s += c
 			mem.push(int(s,10))
-		elif c == 'o':
-			write("%d" % mem.pop())
+		elif c == b'o':
+			write(b"%d" % mem.pop())
 		else:
-			sys.stderr.write('unknown character \'%s\'(%d)\n' % (c,ord(c)))
+			sys.stderr.write('unknown character \'%s\'(%d)\n' % (chr(c[0]),c[0]))
 			exit(-1)
 		
 		ip ^= abs(ip_dir)
@@ -195,9 +199,9 @@ def main():
 		return False
 	
 	def write(s):
-		sys.stdout.write(s)
-		sys.stdout.flush()
-	run(open(filename,'r').read().strip(),lambda: sys.stdin.read(1),write,dumpcond)
+		sys.stdout.buffer.write(s)
+		sys.stdout.buffer.flush()
+	run(open(filename,'rb').read(),lambda: sys.stdin.buffer.read(1),write,dumpcond)
 	
 
 if __name__=='__main__':
